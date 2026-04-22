@@ -1,0 +1,554 @@
+voila ma structure de projet qui contient des microservices et un docker-compose plus le frontend sans oublier un fichier start_all.sh pour executer commancant par le micro service ms-admin ce dossier contient 3 fichiers le auth_utils.py a ce code suivant import jwt
+from jwt import PyJWKClient
+from fastapi import Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+
+# URL du JWKS (JSON Web Key Set) fourni par Keycloak pour notre Realm
+# Changez 'ent-realm' par le nom du realm que vous allez créer.
+JWKS_URL = "http://localhost:8080/realms/ent-realm/protocol/openid-connect/certs"
+
+jwks_client = PyJWKClient(JWKS_URL)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="http://localhost:8000/login") # Url de notre ms_auth pour la doc Swagger
+
+def verifier_token(token: str = Depends(oauth2_scheme)):
+    try:
+        # Récupère la bonne clé publique à partir de l'entête du Token (KID)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        
+        # Décode et vérifie le token (signature, expiration, etc.)
+        data = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            options={"verify_aud": False} # On désactive la vérification de l'audience pour la simplicité
+        )
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Non autorisé (Token Invalide) : {str(e)}")
+plus un fichier database.py qui a le code suivant : from cassandra.cluster import Cluster
+
+def get_db_session():
+    # En production, l'IP devrait venir des variables d'environnement
+    cluster = Cluster(['127.0.0.1'], port=9042)
+    session = cluster.connect('ent_db')
+    return session
+plus main.py qui contient ce code from fastapi import FastAPI, Depends, HTTPException
+from pydantic import BaseModel
+from database import get_db_session
+from auth_utils import verifier_token
+from keycloak import KeycloakAdmin
+from keycloak.exceptions import KeycloakError
+
+# Ce microservice permet aux administrateurs de créer les utilisateurs et les rôles.
+# Il nécessite une authentification stricte.
+
+app = FastAPI(title="Microservice Administration", version="1.0")
+
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Configuration de l'API Admin de Keycloak (utilise le compte admin global pour configurer le realm)
+keycloak_admin = KeycloakAdmin(
+    server_url="http://localhost:8080/",
+    username='admin',
+    password='admin',
+    realm_name="ent-realm",
+    user_realm_name="master",
+    client_id="admin-cli",
+    verify=True
+)
+
+class User(BaseModel):
+    nom: str
+    prenom: str
+    email: str
+    role: str # etudiant, enseignant, admin
+
+@app.get("/")
+def admin_root():
+    return {"message": "Service d'Administration (Gestion Utilisateurs)"}
+
+@app.post("/users/")
+def creer_utilisateur(user: User, token_data: dict = Depends(verifier_token)):
+    # 1. Validation RBAC stricte : Rôle Admin Requis
+    roles = token_data.get("realm_access", {}).get("roles", [])
+    if "admin" not in roles:
+        raise HTTPException(status_code=403, detail="Accès refusé : rôle administrateur requis")
+    # 2. Création de l'utilisateur dans Keycloak via l'API Admin REST
+    try:
+        new_user_id = keycloak_admin.create_user({
+            "email": user.email,
+            "username": user.email,
+            "enabled": True,
+            "firstName": user.prenom,
+            "lastName": user.nom,
+            "credentials": [{"value": "admin", "type": "password", "temporary": False}] # Mot de passe par défaut
+        }, exist_ok=False)
+    except KeycloakError as e:
+        raise HTTPException(status_code=400, detail=f"Erreur lors de la création coté Keycloak : {e}")
+    
+    # 2.5 Assigner le rôle métier au nouvel utilisateur
+    try:
+        try:
+            role = keycloak_admin.get_realm_role(user.role)
+        except KeycloakError:
+            keycloak_admin.create_realm_role({"name": user.role})
+            role = keycloak_admin.get_realm_role(user.role)
+        keycloak_admin.assign_realm_roles(user_id=new_user_id, roles=[role])
+    except Exception as e:
+        print(f"Erreur d'assignement de rôle : {e}")
+        # On ne bloque pas si le rôle échoue, mais on le log
+        
+    # 3. Sauvegarde d'informations complémentaires dans Cassandra
+    try:
+        session = get_db_session()
+        query = "INSERT INTO utilisateurs (email, nom, prenom, role) VALUES (%s, %s, %s, %s)"
+        session.execute(query, (user.email, user.nom, user.prenom, user.role))
+    except Exception as dbe:
+        raise HTTPException(status_code=500, detail=f"Erreur Cassandra : {dbe}")
+    
+    return {"message": "Utilisateur créé avec succès dans Keycloak et Cassandra", "user": user}
+pour le dossier ms_auth j'ai un fichier main.py contient ce code from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
+from keycloak import KeycloakOpenID
+from keycloak.exceptions import KeycloakAuthenticationError
+
+# Ce microservice est responsable de l'authentification avec Keycloak.
+# Il fournit un token JWT après connexion via Keycloak.
+
+app = FastAPI(title="Microservice Core (Auth)", version="1.0")
+
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Configuration du client Keycloak
+# IMPORTANT : Ces valeurs doivent correspondre à celles configurées dans l'interface Keycloak
+keycloak_openid = KeycloakOpenID(
+    server_url="http://localhost:8080/",
+    client_id="ent-app",
+    realm_name="ent-realm",
+    verify=True
+)
+
+@app.get("/")
+def read_root():
+    return {"message": "Service d'Authentification (Keycloak Integration)"}
+
+@app.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    try:
+        # On demande le token à Keycloak avec le username et password fournis par l'utilisateur
+        token = keycloak_openid.token(form_data.username, form_data.password)
+        return {"access_token": token["access_token"], "token_type": "bearer"}
+    except KeycloakAuthenticationError as e:
+        print(f"Keycloak Authentication Error: {e}")
+        raise HTTPException(status_code=401, detail="Identifiants incorrects")
+    except Exception as e:
+        print(f"Keycloak 500 Exception: {getattr(e, 'error_message', str(e))}")
+        raise HTTPException(status_code=500, detail=f"Erreur Keycloak: {getattr(e, 'error_message', str(e))}")
+un autre micro service ms_fichiers contient 3 fichiers auth_utils.py a ce code suivant import jwt
+from jwt import PyJWKClient
+from fastapi import Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+
+# URL du JWKS (JSON Web Key Set) fourni par Keycloak pour notre Realm
+# Changez 'ent-realm' par le nom du realm que vous allez créer.
+JWKS_URL = "http://localhost:8080/realms/ent-realm/protocol/openid-connect/certs"
+
+jwks_client = PyJWKClient(JWKS_URL)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="http://localhost:8000/login") # Url de notre ms_auth pour la doc Swagger
+
+def verifier_token(token: str = Depends(oauth2_scheme)):
+    try:
+        # Récupère la bonne clé publique à partir de l'entête du Token (KID)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        
+        # Décode et vérifie le token (signature, expiration, etc.)
+        data = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            options={"verify_aud": False} # On désactive la vérification de l'audience pour la simplicité
+        )
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Non autorisé (Token Invalide) : {str(e)}")
+plus le fichier database.py a le code suivant from cassandra.cluster import Cluster
+
+def get_db_session():
+    # En production, l'IP devrait venir des variables d'environnement
+    cluster = Cluster(['127.0.0.1'], port=9042)
+    session = cluster.connect('ent_db')
+    return session
+et le fichier main.py a le code suivant from fastapi import FastAPI, UploadFile, File, Depends, Form, HTTPException
+import uuid
+import io
+from database import get_db_session
+from auth_utils import verifier_token
+from minio import Minio
+
+app = FastAPI(title="Microservice Ajout Fichiers", version="1.0")
+
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialisation MinIO
+minio_client = Minio(
+    "127.0.0.1:9000",
+    access_key="admin",
+    secret_key="admin123",
+    secure=False
+)
+
+try:
+    if not minio_client.bucket_exists("cours"):
+        minio_client.make_bucket("cours")
+except Exception as e:
+    print(f"Erreur MinIO au démarrage: {e}")
+
+@app.get("/")
+def read_root():
+    return {"message": "Service d'Ajout de Fichiers (MinIO & Cassandra)"}
+
+@app.post("/cours/upload/")
+async def upload_cours(
+    titre: str = Form(...),
+    description: str = Form(...),
+    fichier: UploadFile = File(...),
+    token_data: dict = Depends(verifier_token)
+):
+    # Sécurité RBAC : Vérifier si l'utilisateur est un enseignant
+    roles = token_data.get("realm_access", {}).get("roles", [])
+    if "enseignant" not in roles:
+        raise HTTPException(status_code=403, detail="Accès refusé : rôle enseignant requis")
+    
+    # Stocker physiquement dans MinIO
+    content = await fichier.read()
+    content_io = io.BytesIO(content)
+    
+    minio_client.put_object(
+        "cours", 
+        fichier.filename, 
+        content_io, 
+        len(content),
+        content_type=fichier.content_type
+    )
+
+    url_virtuelle = f"minio://cours/{fichier.filename}"
+    
+    # Sauvegarde dans Cassandra
+    session = get_db_session()
+    cours_id = uuid.uuid4()
+    query = "INSERT INTO cours (id, titre, description, nom_fichier, url) VALUES (%s, %s, %s, %s, %s)"
+    session.execute(query, (cours_id, titre, description, fichier.filename, url_virtuelle))
+    
+    return {
+        "id": str(cours_id),
+        "titre": titre,
+        "nom_fichier": fichier.filename, 
+        "upload_by": token_data.get("preferred_username", "Inconnu"),
+        "status": "Uploadé avec succès vers MinIO et Cassandra"
+    }
+et un autre micro service dans le dossier ms_telechargement et 3 fichiers le fichier auth_utils.py contient le  code suivant import jwt
+from jwt import PyJWKClient
+from fastapi import Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+
+# URL du JWKS (JSON Web Key Set) fourni par Keycloak pour notre Realm
+# Changez 'ent-realm' par le nom du realm que vous allez créer.
+JWKS_URL = "http://localhost:8080/realms/ent-realm/protocol/openid-connect/certs"
+
+jwks_client = PyJWKClient(JWKS_URL)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="http://localhost:8000/login") # Url de notre ms_auth pour la doc Swagger
+
+def verifier_token(token: str = Depends(oauth2_scheme)):
+    try:
+        # Récupère la bonne clé publique à partir de l'entête du Token (KID)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        
+        # Décode et vérifie le token (signature, expiration, etc.)
+        data = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            options={"verify_aud": False} # On désactive la vérification de l'audience pour la simplicité
+        )
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Non autorisé (Token Invalide) : {str(e)}")
+plus database.py a le code suivant from cassandra.cluster import Cluster
+
+def get_db_session():
+    # En production, l'IP devrait venir des variables d'environnement
+    cluster = Cluster(['127.0.0.1'], port=9042)
+    session = cluster.connect('ent_db')
+    return session
+plus main.py a le code suivant from fastapi import FastAPI, Depends, HTTPException
+from database import get_db_session
+from auth_utils import verifier_token
+from minio import Minio
+import uuid
+
+app = FastAPI(title="Microservice Téléchargement", version="1.0")
+
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+minio_client = Minio(
+    "127.0.0.1:9000",
+    access_key="admin",
+    secret_key="admin123",
+    secure=False
+)
+
+@app.get("/")
+def root():
+    return {"message": "Service de Téléchargement de Cours"}
+
+@app.get("/cours/")
+def lister_cours(token_data: dict = Depends(verifier_token)):
+    roles = token_data.get("realm_access", {}).get("roles", [])
+    if "etudiant" not in roles:
+        raise HTTPException(status_code=403, detail="Accès refusé : rôle étudiant requis")
+
+    session = get_db_session()
+    lignes = session.execute("SELECT id, titre, description, nom_fichier, url FROM cours")
+    
+    liste_cours = []
+    for ligne in lignes:
+        liste_cours.append({
+            "id": str(ligne.id),
+            "titre": ligne.titre,
+            "description": ligne.description,
+            "nom_fichier": ligne.nom_fichier,
+            "url": ligne.url
+        })
+        
+    return {"cours": liste_cours, "requested_by": token_data.get("preferred_username")}
+
+@app.get("/cours/download/{fichier_id}")
+def telecharger_cours(fichier_id: str, token_data: dict = Depends(verifier_token)):
+    roles = token_data.get("realm_access", {}).get("roles", [])
+    if "etudiant" not in roles:
+        raise HTTPException(status_code=403, detail="Accès refusé : rôle étudiant requis")
+    
+    session = get_db_session()
+    try:
+        f_id = uuid.UUID(fichier_id)
+        resultat = session.execute("SELECT nom_fichier FROM cours WHERE id = %s", [f_id])
+        if resultat.one():
+            fichier_nom = resultat.one().nom_fichier
+            
+            # Génération d'un lien sécurisé (valable 2 heures max par exemple)
+            # timedelta(hours=2) is used by minio python library
+            from datetime import timedelta
+            url_telechargement = minio_client.presigned_get_object("cours", fichier_nom, expires=timedelta(hours=2))
+            
+            return {"url_telechargement": url_telechargement}
+        else:
+            raise HTTPException(status_code=404, detail="Fichier non trouvé")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ID invalide")
+a la fin docker-compose.yml qui contient version: '3.8'
+
+services:
+  cassandra:
+    image: cassandra:latest
+    container_name: ent-cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      - CASSANDRA_CLUSTER_NAME=ENTCluster
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: ent-keycloak
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    command: start-dev
+
+  minio:
+    image: minio/minio:latest
+    container_name: ent-minio
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=admin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  cassandra_data:
+  minio_data:
+plus fichier init_casandra a le code suivant import time
+from cassandra.cluster import Cluster
+from cassandra.query import SimpleStatement
+
+def verifier_connexion():
+    print("Tentative de connexion à Cassandra...")
+    cluster = Cluster(['127.0.0.1'], port=9042)
+    
+    # On va essayer de se connecter avec un retry pour attendre que Cassandra démarre
+    session = None
+    for i in range(20):
+        try:
+            session = cluster.connect()
+            print("Connecté avec succès à Cassandra !")
+            break
+        except Exception as e:
+            print(f"En attente de Cassandra... ({i+1}/20)")
+            time.sleep(2)
+            
+    if not session:
+        print("Impossible de se connecter à Cassandra. Vérifiez que Docker est bien lancé.")
+        exit(1)
+        
+    return cluster, session
+
+def initialiser_base(session):
+    print("Création du Keyspace 'ent_db'...")
+    session.execute("""
+        CREATE KEYSPACE IF NOT EXISTS ent_db 
+        WITH replication = {'class':'SimpleStrategy', 'replication_factor':1};
+    """)
+    
+    session.set_keyspace('ent_db')
+
+    print("Création de la table 'utilisateurs'...")
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS utilisateurs (
+            email text PRIMARY KEY,
+            nom text,
+            prenom text,
+            role text
+        );
+    """)
+
+    print("Création de la table 'cours'...")
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS cours (
+            id uuid PRIMARY KEY,
+            titre text,
+            description text,
+            nom_fichier text,
+            url text
+        );
+    """)
+
+    print("Initialisation terminée avec succès !")
+
+if __name__ == "__main__":
+    cluster, session = verifier_connexion()
+    initialiser_base(session)
+    cluster.shutdown()
+plus fichier requirements.txt   fastapi==0.110.0
+uvicorn==0.29.0
+pydantic==2.6.4
+python-multipart==0.0.9
+httpx==0.27.0
+# Dépendances spécifiques qui seront nécessaires par la suite :
+cassandra-driver # Pour se connecter à Cassandra
+minio            # Pour se connecter à MinIO
+python-keycloak  # Pour interagir avec l'API Keycloak
+PyJWT[crypto]    # Pour décoder/valider les JWT asymétriquement
+et sans oublier le fichier de executement  start_all.sh #!/bin/bash
+
+# Configuration des couleurs
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}=== Lancement de l'Espace Numérique de Travail (ENT) ===${NC}"
+
+# Vérifier si Docker tourne
+if ! docker info > /dev/null 2>&1; then
+  echo -e "${RED}ERREUR: Docker n'est pas allumé ! Veuillez lancer l'application 'Docker Desktop' sur votre Mac d'abord.${NC}"
+  exit 1
+fi
+
+echo -e "${GREEN}[1/3] Nettoyage des anciens processus & Démarrage de Docker...${NC}"
+
+# Tuer tous les processus qui pourraient utiliser nos ports
+lsof -ti :8000,8001,8002,8003,8004,5173 | xargs kill -9 2>/dev/null
+
+docker-compose up -d
+
+echo "Attente de 10 secondes pour l'initialisation basale de l'infrastructure..."
+sleep 10
+
+python3 init_cassandra.py || echo "Initialisation Cassandra sautée."
+
+echo -e "${GREEN}[2/3] Démarrage des microservices FastAPI...${NC}"
+
+# On utilise des sous-shells ( ... ) pour ne pas modifier le dossier parent
+(cd ms_auth && python3 -m uvicorn main:app --port 8000) &
+PID_AUTH=$!
+
+(cd ms_admin && python3 -m uvicorn main:app --port 8001) &
+PID_ADMIN=$!
+
+(cd ms_fichiers && python3 -m uvicorn main:app --port 8002) &
+PID_FICHIERS=$!
+
+(cd ms_telechargement && python3 -m uvicorn main:app --port 8003) &
+PID_TELECHARGEMENT=$!
+
+(cd ms_ia && python3 -m uvicorn main:app --port 8004) &
+PID_IA=$!
+
+echo -e "${GREEN}[3/3] Démarrage du Frontend React (Port 5173)...${NC}"
+(cd frontend && python3 -m http.server 5173) &
+PID_FRONT=$!
+
+echo -e "\n${BLUE}=== TOUT EST EN LIGNE ===${NC}"
+echo -e "🔗 Frontend React accessible sur : ${GREEN}http://localhost:5173${NC}"
+echo -e "🛡️ Accès administrateur Keycloak sur : ${GREEN}http://localhost:8080${NC}"
+echo -e "\nAppuyez sur CTRL+C pour tout arrêter proprement."
+
+cleanup() {
+    echo -e "\n${BLUE}Arrêt de tous les microservices et serveurs Web...${NC}"
+    kill $PID_AUTH $PID_ADMIN $PID_FICHIERS $PID_TELECHARGEMENT $PID_IA $PID_FRONT
+    echo -e "${BLUE}Arrêt des conteneurs Docker (Cassandra & Keycloak)...${NC}"
+    docker-compose stop
+    exit 0
+}
+
+trap cleanup SIGINT
+wait
+le problème c'est que lorsque je veux creer un utilisateur il m'affiche ce erreur sachant que j'ai effectuer tous les actions nécessaires dans Keycloak pour que le admin a le role de creer les users mais quand je lance le login avec user admin et je veux ajouter des users il m'affiche ce erreur Erreur: Erreur lors de la création coté Keycloak : 400: b'{"error":"invalid_grant","error_description":"Invalid user credentials"}'

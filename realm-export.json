@@ -1,0 +1,39 @@
+{
+  "realm": "ent-realm",
+  "enabled": true,
+  "roles": {
+    "realm": [
+      { "name": "etudiant" },
+      { "name": "enseignant" },
+      { "name": "admin" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "ent-app",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "webOrigins": ["*"],
+      "redirectUris": ["*"],
+      "fullScopeAllowed": true
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@um5.ac.ma",
+      "firstName": "Admin",
+      "lastName": "ENT",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["admin"]
+    }
+  ]
+}

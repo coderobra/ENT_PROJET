@@ -1,0 +1,10 @@
+fastapi==0.110.0
+uvicorn==0.29.0
+pydantic==2.6.4
+python-multipart==0.0.9
+httpx==0.27.0
+# Dépendances spécifiques qui seront nécessaires par la suite :
+cassandra-driver # Pour se connecter à Cassandra
+minio            # Pour se connecter à MinIO
+python-keycloak  # Pour interagir avec l'API Keycloak
+PyJWT[crypto]    # Pour décoder/valider les JWT asymétriquement

@@ -1,0 +1,24 @@
+# Données Docker
+keycloak_data/
+cassandra_data/
+minio_data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+.env
+
+# Node / React
+node_modules/
+dist/
+build/
+.eslintcache
+
+# Système
+.DS_Store
+*.log
+.idea/
+.vscode/

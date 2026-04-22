@@ -1,0 +1,204 @@
+version: '3.8'
+
+services:
+  # Infrastructure
+  cassandra:
+    image: cassandra:latest
+    container_name: ent-cassandra
+    networks:
+      - ent-network
+    environment:
+      - CASSANDRA_CLUSTER_NAME=ENTCluster
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD", "cqlsh", "-u", "cassandra", "-p", "cassandra", "-e", "describe keyspaces"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 45s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: ent-keycloak
+    networks:
+      - ent-network
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+      - KC_DB_IMPORT_STRATEGY=OVERWRITE_EXISTING
+      - KC_HOSTNAME_PATH=/auth
+      - KC_HOSTNAME_URL=http://localhost/auth
+      - KC_HTTP_ENABLED=true
+      - KC_PROXY=edge
+      - KC_HOSTNAME_STRICT=false
+    command: start-dev --import-realm
+    ports:
+    - "8080:8080"
+    volumes:
+      - ./realm-export.json:/opt/keycloak/data/import/realm.json:ro
+      - keycloak_data:/opt/keycloak/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: ent-minio
+    networks:
+      - ent-network
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=admin123
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  # Microservices Backends
+  ms-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: ms-auth
+    working_dir: /app/ms_auth
+    networks:
+      - ent-network
+    environment:
+      - KEYCLOAK_URL=http://keycloak:8080
+    depends_on:
+      keycloak:
+        condition: service_started
+      keycloak-init:
+        condition: service_completed_successfully
+
+  ms-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: ms-admin
+    working_dir: /app/ms_admin
+    networks:
+      - ent-network
+    environment:
+      - CASSANDRA_HOST=cassandra
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      keycloak-init:
+        condition: service_completed_successfully
+
+  ms-fichiers:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: ms-fichiers
+    working_dir: /app/ms_fichiers
+    networks:
+      - ent-network
+    environment:
+      - CASSANDRA_HOST=cassandra
+      - MINIO_ENDPOINT=ent-minio:9000
+      - KEYCLOAK_URL=http://keycloak:8080
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      keycloak-init:
+        condition: service_completed_successfully
+
+  ms-telechargement:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: ms-telechargement
+    working_dir: /app/ms_telechargement
+    networks:
+      - ent-network
+    environment:
+      - CASSANDRA_HOST=cassandra
+      - MINIO_ENDPOINT=ent-minio:9000
+      - KEYCLOAK_URL=http://keycloak:8080
+      - MINIO_PUBLIC_URL=http://localhost:9000
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      keycloak-init:
+        condition: service_completed_successfully
+
+  ms-ia:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: ms-ia
+    working_dir: /app/ms_ia
+    networks:
+      - ent-network
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Initialisation Cassandra (Auto-destructible)
+  cassandra-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: cassandra-init
+    command: python /app/init_cassandra.py
+    networks:
+      - ent-network
+    environment:
+      - CASSANDRA_HOST=cassandra
+    depends_on:
+      cassandra:
+        condition: service_healthy
+
+  # Initialisation Keycloak (Auto-destructible)
+  keycloak-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: keycloak-init
+    command: python /app/init_keycloak.py
+    networks:
+      - ent-network
+    environment:
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    depends_on:
+      keycloak:
+        condition: service_started
+
+  # Frontend & Gateway (Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ent-frontend
+    ports:
+      - "80:80"
+    networks:
+      - ent-network
+    depends_on:
+      - ms-auth
+      - ms-admin
+      - ms-fichiers
+      - ms-telechargement
+
+networks:
+  ent-network:
+    driver: bridge
+
+volumes:
+  cassandra_data:
+  minio_data:
+  keycloak_data:
