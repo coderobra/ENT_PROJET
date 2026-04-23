@@ -1122,48 +1122,173 @@ function EnseignantView({ token, onLogout }) {
 // VUE ADMIN – Dashboard complet
 // Tous les modules + Pannel Admin + chatbot
 // =============================================
+
+function PlaceholderPanel({ title, subtitle, icon, color, onBack }) {
+    return (
+        <div style={{padding:"2rem", maxWidth:"1200px", margin:"0 auto"}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1.5rem"}}>
+                <div>
+                    <h1 style={{fontSize:"2rem", fontWeight:"800", color:"var(--primary)", display:"flex", alignItems:"center", gap:"0.75rem"}}>
+                        <i className={`fas ${icon}`}></i> {title}
+                    </h1>
+                    <p style={{color:"var(--text-light)", marginTop:"0.35rem"}}>
+                        {subtitle}
+                    </p>
+                </div>
+
+                <button
+                    onClick={onBack}
+                    style={{
+                        background:"#64748b",
+                        color:"white",
+                        border:"none",
+                        borderRadius:"12px",
+                        padding:"0.9rem 1.4rem",
+                        fontWeight:"700",
+                        cursor:"pointer"
+                    }}
+                >
+                    <i className="fas fa-arrow-left"></i> Retour
+                </button>
+            </div>
+
+            <div style={{
+                background:"white",
+                border:"1px solid var(--border)",
+                borderRadius:"16px",
+                padding:"2rem",
+                boxShadow:"0 2px 10px rgba(0,0,0,0.06)"
+            }}>
+                <div style={{
+                    display:"flex",
+                    alignItems:"center",
+                    gap:"1rem",
+                    marginBottom:"1rem"
+                }}>
+                    <div style={{
+                        width:"64px",
+                        height:"64px",
+                        borderRadius:"50%",
+                        background:color,
+                        color:"white",
+                        display:"flex",
+                        alignItems:"center",
+                        justifyContent:"center",
+                        fontSize:"1.5rem"
+                    }}>
+                        <i className={`fas ${icon}`}></i>
+                    </div>
+
+                    <div>
+                        <h2 style={{margin:0, fontSize:"1.35rem", color:"var(--text-dark)"}}>
+                            Module accessible
+                        </h2>
+                        <p style={{margin:"0.35rem 0 0 0", color:"var(--text-light)"}}>
+                            Cette page est un écran rapide de démonstration.
+                        </p>
+                    </div>
+                </div>
+
+                <div style={{
+                    marginTop:"1.5rem",
+                    background:"#f8fafc",
+                    border:"1px dashed #cbd5e1",
+                    borderRadius:"12px",
+                    padding:"1.25rem",
+                    color:"#475569"
+                }}>
+                    <strong>{title}</strong> fonctionne côté interface.
+                    <br />
+                    Le backend complet de ce module n'est pas encore développé.
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function AdminView({ token, onLogout }) {
     const [currentView, setCurrentView] = useState('dashboard');
     const [showProfile, setShowProfile] = useState(false);
 
     const modules = [
-        { title:"Messagerie",             desc:"Messagerie électronique des étudiants.",     icon:"fa-envelope",       color:"#3b82f6", action:null },
-        { title:"Notes",                  desc:"Consulter vos notes aux épreuves.",           icon:"fa-file-alt",       color:"#8b5cf6", action:null },
-        { title:"Calendrier des examens", desc:"Consulter le calendrier des examens.",        icon:"fa-calendar-alt",   color:"#06b6d4", action:null },
-        { title:"Demande d'intervention", desc:"Assistance aux utilisateurs.",                icon:"fa-tools",          color:"#f59e0b", action:null },
-        { title:"Cours en ligne",         desc:"Accéder à la plateforme pédagogique.",        icon:"fa-graduation-cap", color:"#10b981", action:() => setCurrentView('cours') },
-        { title:"Assistance ENT",         desc:"FAQ sur l'Environnement Numérique de Travail.",icon:"fa-life-ring",    color:"#ef4444", action:null },
-        { title:"Administration",         desc:"Gérer les comptes étudiants et enseignants.", icon:"fa-users-cog",      color:"#f97316", action:() => setCurrentView('admin') },
+        { title:"Messagerie",             desc:"Messagerie électronique des étudiants.",      icon:"fa-envelope",       color:"#3b82f6", view:"messagerie" },
+        { title:"Notes",                  desc:"Consulter vos notes aux épreuves.",            icon:"fa-file-alt",       color:"#8b5cf6", view:"notes" },
+        { title:"Calendrier des examens", desc:"Consulter le calendrier des examens.",         icon:"fa-calendar-alt",   color:"#06b6d4", view:"calendrier" },
+        { title:"Demande d'intervention", desc:"Assistance aux utilisateurs.",                 icon:"fa-tools",          color:"#f59e0b", view:"intervention" },
+        { title:"Cours en ligne",         desc:"Accéder à la plateforme pédagogique.",         icon:"fa-graduation-cap", color:"#10b981", view:"cours" },
+        { title:"Assistance ENT",         desc:"FAQ sur l'Environnement Numérique de Travail.",icon:"fa-life-ring",     color:"#ef4444", view:"assistance" },
+        { title:"Administration",         desc:"Gérer les comptes étudiants et enseignants.",  icon:"fa-users-cog",      color:"#f97316", view:"admin" },
     ];
+
+    const openModule = (view) => {
+        setCurrentView(view);
+    };
 
     return (
         <div style={{minHeight:"100vh", background:"var(--bg-page)"}}>
             {showProfile && <ProfileModal token={token} onClose={() => setShowProfile(false)} />}
+
             <div className="dashboard-navbar">
-                <div className={`nav-item ${currentView==='dashboard'?'active':''}`} onClick={() => setCurrentView('dashboard')}>
+                <div
+                    className={`nav-item ${currentView==='dashboard'?'active':''}`}
+                    onClick={() => setCurrentView('dashboard')}
+                >
                     <i className="fas fa-home"></i> Accueil
                 </div>
-                <div className="nav-item"><i className="fas fa-user-edit"></i> Inscriptions</div>
-                <div className="nav-item"><i className="fas fa-book"></i> Scolarité</div>
-                <div className={`nav-item ${currentView==='cours'?'active':''}`} onClick={() => setCurrentView('cours')}>
+
+                <div
+                    className={`nav-item ${currentView==='inscriptions'?'active':''}`}
+                    onClick={() => setCurrentView('inscriptions')}
+                >
+                    <i className="fas fa-user-edit"></i> Inscriptions
+                </div>
+
+                <div
+                    className={`nav-item ${currentView==='scolarite'?'active':''}`}
+                    onClick={() => setCurrentView('scolarite')}
+                >
+                    <i className="fas fa-book"></i> Scolarité
+                </div>
+
+                <div
+                    className={`nav-item ${currentView==='cours'?'active':''}`}
+                    onClick={() => setCurrentView('cours')}
+                >
                     <i className="fas fa-laptop-code"></i> Cours
                 </div>
-                <div className={`nav-item ${currentView==='admin'?'active':''}`} onClick={() => setCurrentView('admin')}>
+
+                <div
+                    className={`nav-item ${currentView==='admin'?'active':''}`}
+                    onClick={() => setCurrentView('admin')}
+                >
                     <i className="fas fa-users-cog"></i> Administration
                 </div>
+
                 <div className="nav-item" onClick={() => setShowProfile(true)} style={{marginLeft:"auto"}}>
                     <i className="fas fa-user-circle"></i> Profil
                 </div>
+
                 <div className="nav-item" onClick={onLogout} style={{color:"#ef4444", cursor:"pointer"}}>
                     <i className="fas fa-sign-out-alt"></i> Déconnexion
                 </div>
             </div>
 
-            {/* Badge rôle */}
-            <div style={{display:"flex", alignItems:"center", gap:"0.5rem",
-                         padding:"1rem 2rem", background:"#fff7ed", borderBottom:"1px solid #fed7aa"}}>
-                <span style={{background:"#f97316", color:"white", padding:"0.2rem 0.75rem",
-                              borderRadius:"20px", fontSize:"0.78rem", fontWeight:"700"}}>
+            <div style={{
+                display:"flex",
+                alignItems:"center",
+                gap:"0.5rem",
+                padding:"1rem 2rem",
+                background:"#fff7ed",
+                borderBottom:"1px solid #fed7aa"
+            }}>
+                <span style={{
+                    background:"#f97316",
+                    color:"white",
+                    padding:"0.2rem 0.75rem",
+                    borderRadius:"20px",
+                    fontSize:"0.78rem",
+                    fontWeight:"700"
+                }}>
                     <i className="fas fa-user-shield"></i> ADMINISTRATEUR
                 </span>
                 <span style={{color:"var(--text-light)", fontSize:"0.85rem"}}>
@@ -1175,18 +1300,26 @@ function AdminView({ token, onLogout }) {
                 <div className="dashboard-container">
                     <div className="cards-grid">
                         {modules.map((mod, idx) => (
-                            <div key={idx} className="module-card"
-                                 onClick={mod.action || undefined}
-                                 style={{cursor: mod.action ? 'pointer' : 'default'}}>
+                            <div
+                                key={idx}
+                                className="module-card"
+                                onClick={() => openModule(mod.view)}
+                                style={{cursor:'pointer'}}
+                            >
                                 <div className="card-header">
                                     <span>{mod.title}</span>
-                                    <span style={{cursor:"pointer"}}>Options <i className="fas fa-caret-down"></i></span>
+                                    <span>Options <i className="fas fa-caret-down"></i></span>
                                 </div>
-                                <div className="card-banner" style={{background:`linear-gradient(135deg, ${mod.color}18, ${mod.color}30)`}}>
+
+                                <div
+                                    className="card-banner"
+                                    style={{background:`linear-gradient(135deg, ${mod.color}18, ${mod.color}30)`}}
+                                >
                                     <div className="icon-circle" style={{background:mod.color}}>
                                         <i className={`fas ${mod.icon}`}></i>
                                     </div>
                                 </div>
+
                                 <div className="card-content">
                                     <h3>{mod.title}</h3>
                                     <p>{mod.desc}</p>
@@ -1203,6 +1336,76 @@ function AdminView({ token, onLogout }) {
 
             {currentView === 'admin' && (
                 <AdminPanel token={token} onBack={() => setCurrentView('dashboard')} />
+            )}
+
+            {currentView === 'messagerie' && (
+                <PlaceholderPanel
+                    title="Messagerie"
+                    subtitle="Messagerie électronique des étudiants."
+                    icon="fa-envelope"
+                    color="#3b82f6"
+                    onBack={() => setCurrentView('dashboard')}
+                />
+            )}
+
+            {currentView === 'notes' && (
+                <PlaceholderPanel
+                    title="Notes"
+                    subtitle="Consultation des notes et résultats."
+                    icon="fa-file-alt"
+                    color="#8b5cf6"
+                    onBack={() => setCurrentView('dashboard')}
+                />
+            )}
+
+            {currentView === 'calendrier' && (
+                <PlaceholderPanel
+                    title="Calendrier des examens"
+                    subtitle="Consultation du calendrier des examens."
+                    icon="fa-calendar-alt"
+                    color="#06b6d4"
+                    onBack={() => setCurrentView('dashboard')}
+                />
+            )}
+
+            {currentView === 'intervention' && (
+                <PlaceholderPanel
+                    title="Demande d'intervention"
+                    subtitle="Suivi des demandes d'assistance."
+                    icon="fa-tools"
+                    color="#f59e0b"
+                    onBack={() => setCurrentView('dashboard')}
+                />
+            )}
+
+            {currentView === 'assistance' && (
+                <PlaceholderPanel
+                    title="Assistance ENT"
+                    subtitle="FAQ et aide rapide pour l'ENT."
+                    icon="fa-life-ring"
+                    color="#ef4444"
+                    onBack={() => setCurrentView('dashboard')}
+                />
+            )}
+
+            {currentView === 'inscriptions' && (
+                <PlaceholderPanel
+                    title="Inscriptions"
+                    subtitle="Gestion rapide des inscriptions."
+                    icon="fa-user-edit"
+                    color="#2563eb"
+                    onBack={() => setCurrentView('dashboard')}
+                />
+            )}
+
+            {currentView === 'scolarite' && (
+                <PlaceholderPanel
+                    title="Scolarité"
+                    subtitle="Informations de scolarité."
+                    icon="fa-book"
+                    color="#4f46e5"
+                    onBack={() => setCurrentView('dashboard')}
+                />
             )}
 
             <Chatbot token={token} />
