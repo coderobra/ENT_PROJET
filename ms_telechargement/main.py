@@ -29,12 +29,19 @@ internal_client = Minio(
 )
 
 # 2. Client dédié à la SIGNATURE des URLs (pour le Navigateur)
-MINIO_PUBLIC_HOST = "localhost:9000"
+# On récupère l'IP publique depuis l'environnement (ex: 192.168.10.204)
+MINIO_PUBLIC_URL = os.getenv("MINIO_PUBLIC_URL", "http://localhost:9000")
+
+# Extraction du host pour le client MinIO (on retire http://)
+import urllib.parse
+parsed_url = urllib.parse.urlparse(MINIO_PUBLIC_URL)
+MINIO_PUBLIC_HOST = parsed_url.netloc
+
 signer_client = Minio(
     MINIO_PUBLIC_HOST,
     access_key=os.getenv("MINIO_ROOT_USER", "admin"),
     secret_key=os.getenv("MINIO_ROOT_PASSWORD", "admin123"),
-    secure=False,
+    secure=parsed_url.scheme == "https",
     region="us-east-1"
 )
 

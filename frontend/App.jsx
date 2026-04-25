@@ -29,6 +29,18 @@ function decodeJwt(token) {
     }
 }
 
+function isTokenExpired(token) {
+    if (!token) return true;
+    try {
+        const decoded = decodeJwt(token);
+        if (!decoded.exp) return true;
+        // exp est en secondes, Date.now() en millisecondes
+        return (decoded.exp * 1000) < Date.now();
+    } catch {
+        return true;
+    }
+}
+
 function getRolesFromToken(token) {
     const decoded = decodeJwt(token);
     return decoded?.realm_access?.roles || [];
@@ -1417,16 +1429,23 @@ function AdminView({ token, onLogout }) {
 // Composant racine App – routage par rôle
 // =============================================
 function App() {
-    const [token, setToken] = useState(() => sessionStorage.getItem('ent_token') || null);
+    const [token, setToken] = useState(() => {
+        const savedToken = localStorage.getItem('ent_token');
+        if (savedToken && isTokenExpired(savedToken)) {
+            localStorage.removeItem('ent_token');
+            return null;
+        }
+        return savedToken || null;
+    });
     const [view, setView]   = useState('login'); // 'login' | 'forgot'
 
     const handleLogin = (accessToken) => {
-        sessionStorage.setItem('ent_token', accessToken);
+        localStorage.setItem('ent_token', accessToken);
         setToken(accessToken);
     };
 
     const handleLogout = () => {
-        sessionStorage.removeItem('ent_token');
+        localStorage.removeItem('ent_token');
         setToken(null);
     };
 

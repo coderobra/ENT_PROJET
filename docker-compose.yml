@@ -28,7 +28,7 @@ services:
       - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
       - KC_DB_IMPORT_STRATEGY=OVERWRITE_EXISTING
       - KC_HOSTNAME_PATH=/auth
-      - KC_HOSTNAME_URL=http://localhost/auth
+      - KC_HOSTNAME_URL=http://${PUBLIC_IP}/auth
       - KC_HTTP_ENABLED=true
       - KC_PROXY=edge
       - KC_HOSTNAME_STRICT=false
@@ -124,7 +124,7 @@ services:
       - CASSANDRA_HOST=cassandra
       - MINIO_ENDPOINT=ent-minio:9000
       - KEYCLOAK_URL=http://keycloak:8080
-      - MINIO_PUBLIC_URL=http://localhost:9000
+      - MINIO_PUBLIC_URL=http://${PUBLIC_IP}/minio
     depends_on:
       cassandra:
         condition: service_healthy
