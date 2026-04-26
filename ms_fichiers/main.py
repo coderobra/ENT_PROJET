@@ -10,6 +10,7 @@ import os
 
 app = FastAPI(title="MS Fichiers")
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

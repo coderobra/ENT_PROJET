@@ -89,6 +89,12 @@ def download(cours_id: str, token_data: dict = Depends(verifier_token)):
             }
         )
 
+        # Correction : Si on utilise un proxy Nginx avec un préfixe (ex: /minio)
+        # On doit l'ajouter manuellement au lien généré pour que le navigateur tape au bon endroit
+        if parsed_url.path and parsed_url.path != '/':
+            prefix = parsed_url.path.rstrip('/')
+            url = url.replace(parsed_url.netloc, f"{parsed_url.netloc}{prefix}")
+
         return {"url_telechargement": url}
 
     except ValueError:
